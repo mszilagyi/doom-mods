@@ -1,0 +1,19 @@
+server int dc_p0_deaths = 0;
+server int dc_p1_deaths = 0;
+server int dc_p2_deaths = 0;
+server int dc_p3_deaths = 0;
+
+server int dc_p0_ffdeaths = 0;
+server int dc_p1_ffdeaths = 0;
+server int dc_p2_ffdeaths = 0;
+server int dc_p3_ffdeaths = 0;
+
+server int dc_p0_suicides = 0;
+server int dc_p1_suicides = 0;
+server int dc_p2_suicides = 0;
+server int dc_p3_suicides = 0;
+
+server int dc_p0_last_killer = -1;
+server int dc_p1_last_killer = -1;
+server int dc_p2_last_killer = -1;
+server int dc_p3_last_killer = -1;

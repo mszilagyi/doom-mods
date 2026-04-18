@@ -1,0 +1,7 @@
+GameInfo
+{
+    statscreen_coop = "DeathCountCoopScreen"
+    statscreen_single = "DeathCountSPScreen"
+    statusbarclass    = "DeathCountStatusBar"
+    EventHandlers = "DeathCountHandler"
+}

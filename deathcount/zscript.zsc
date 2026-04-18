@@ -1,0 +1,589 @@
+version "4.14.3"
+
+// ─────────────────────────────────────────────────────────────
+//  EventHandler: tracks deaths, friendly fire deaths, suicides
+// ─────────────────────────────────────────────────────────────
+class DeathCountHandler : StaticEventHandler
+{
+    String lastMap;
+
+    int GetPlayerIndex(Actor mo)
+    {
+        if (mo == null || mo.player == null) return -1;
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (playeringame[i] && players[i].mo == mo)
+                return i;
+        }
+        return -1;
+    }
+
+    override void WorldThingDied(WorldEvent e)
+    {
+        if (e.thing == null) return;
+
+        int victim;
+        victim = GetPlayerIndex(e.thing);
+        if (victim < 0) return;
+
+        CVar totalCv;
+        totalCv = CVar.FindCVar("dc_p" .. victim .. "_deaths");
+        if (totalCv)
+        {
+            totalCv.SetInt(totalCv.GetInt() + 1);
+            console.printf("%s died, death count now %d",
+                players[victim].GetUserName(), totalCv.GetInt());
+        }
+
+        // Reset last_killer; will be set below only on FF kills.
+        CVar lkCv;
+        lkCv = CVar.FindCVar("dc_p" .. victim .. "_last_killer");
+        if (lkCv) lkCv.SetInt(-1);
+
+        int killerIdx;
+        killerIdx = GetPlayerIndex(e.thing.target);
+
+        if (killerIdx == victim)
+        {
+            CVar suicideCv;
+            suicideCv = CVar.FindCVar("dc_p" .. victim .. "_suicides");
+            if (suicideCv) suicideCv.SetInt(suicideCv.GetInt() + 1);
+            if (lkCv) lkCv.SetInt(victim);
+            console.printf("%s suicided", players[victim].GetUserName());
+            return;
+        }
+
+        if (killerIdx >= 0)
+        {
+            CVar ffCv;
+            ffCv = CVar.FindCVar("dc_p" .. victim .. "_ffdeaths");
+            if (ffCv) ffCv.SetInt(ffCv.GetInt() + 1);
+            if (lkCv) lkCv.SetInt(killerIdx);
+            console.printf("%s killed by player %s - Friendly Fire!",
+                players[victim].GetUserName(), players[killerIdx].GetUserName());
+        }
+    }
+
+    override void WorldLoaded(WorldEvent e)
+    {
+        String currentMap;
+        currentMap = Level.MapName;
+
+        if (!e.IsSaveGame && currentMap != lastMap)
+        {
+            lastMap = currentMap;
+            for (int i = 0; i < MAXPLAYERS; i++)
+            {
+                CVar cv;
+                cv = CVar.FindCVar("dc_p" .. i .. "_deaths");
+                if (cv) cv.SetInt(0);
+                CVar ff;
+                ff = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
+                if (ff) ff.SetInt(0);
+                CVar su;
+                su = CVar.FindCVar("dc_p" .. i .. "_suicides");
+                if (su) su.SetInt(0);
+                CVar lk;
+                lk = CVar.FindCVar("dc_p" .. i .. "_last_killer");
+                if (lk) lk.SetInt(-1);
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  SP stat screen
+// ─────────────────────────────────────────────────────────────
+class DeathCountSPScreen : DoomStatusScreen
+{
+    override void drawStats()
+    {
+        Super.drawStats();
+
+        int lh;
+        lh = IntermissionFont.GetHeight() * 3 / 2;
+
+        bool useGfx;
+        useGfx = TexMan.OkForLocalization(Kills, "$TXT_IMKILLS")
+            && TexMan.OkForLocalization(Items, "$TXT_IMITEMS")
+            && TexMan.OkForLocalization(P_secret, "$TXT_IMSECRETS")
+            && TexMan.OkForLocalization(Timepic, "$TXT_IMTIME")
+            && (!wbs.partime || TexMan.OkForLocalization(Par, "$TXT_IMPAR"));
+
+        Font textFont;
+        Font printFont;
+        textFont  = generic_ui ? NewSmallFont : content.mFont;
+        printFont = useGfx ? IntermissionFont : (generic_ui ? IntermissionFont : content.mFont);
+
+        // DEATHS row
+        DrawText(textFont, Font.CR_RED, SP_STATSX, SP_STATSY + 3*lh, "DEATHS");
+        CVar dcv;
+        dcv = CVar.FindCVar("dc_p0_deaths");
+        int deaths;
+        deaths = 0;
+        if (dcv) deaths = dcv.GetInt();
+        drawNum(printFont, 320 - SP_STATSX, SP_STATSY + 3*lh, deaths, -1, false, Font.CR_RED);
+
+        // SUICIDES row
+        DrawText(textFont, Font.CR_YELLOW, SP_STATSX, SP_STATSY + 4*lh, "SUICIDES");
+        CVar scv;
+        scv = CVar.FindCVar("dc_p0_suicides");
+        int suicides;
+        suicides = 0;
+        if (scv) suicides = scv.GetInt();
+        drawNum(printFont, 320 - SP_STATSX, SP_STATSY + 4*lh, suicides, -1, false, Font.CR_ORANGE);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Co-op stat screen
+// ─────────────────────────────────────────────────────────────
+class DeathCountCoopScreen : CoopStatusScreen
+{
+    override void drawStats()
+    {
+        int y;
+        y = drawLF();
+        DrawDeathScoreboard(y);
+    }
+
+    protected void DrawDeathScoreboard(int y)
+    {
+        int i;
+        int x;
+        int ypadding;
+        int height;
+        int lineheight;
+        int maxnamewidth;
+        int maxscorewidth;
+        int maxiconheight;
+        int icon_x;
+        int name_x;
+        int kills_x;
+        int bonus_x;
+        int secret_x;
+        int deaths_x;
+        int ff_x;
+        int suicide_x;
+        int bonus_len;
+        int secret_len;
+        int deaths_len;
+        int ff_len;
+        int suicide_len;
+        int missed_kills;
+        int missed_items;
+        int missed_secrets;
+
+        String text_bonus;
+        String text_secret;
+        String text_kills;
+        String text_deaths;
+        String text_ff;
+        String text_suicide;
+        text_bonus   = Stringtable.Localize((gameinfo.gametype & GAME_Raven) ? "$SCORE_BONUS" : "$SCORE_ITEMS");
+        text_secret  = Stringtable.Localize("$SCORE_SECRET");
+        text_kills   = Stringtable.Localize("$SCORE_KILLS");
+        text_deaths  = "DEATHS";
+        text_ff      = "FF";
+        text_suicide = "SUICIDE";
+
+        [maxnamewidth, maxscorewidth, maxiconheight] = GetPlayerWidths();
+
+        height     = int(displayFont.GetHeight() * FontScale);
+        lineheight = MAX(height, maxiconheight * CleanYfac);
+        ypadding   = (lineheight - height + 1) / 2;
+        y         += CleanYfac;
+
+        icon_x    = int(8 * FontScale);
+        name_x    = int(icon_x + maxscorewidth * FontScale);
+        kills_x   = int(name_x + (maxnamewidth + 1 + MAX(displayFont.StringWidth("XXXXXXXXXX"),
+                        displayFont.StringWidth(text_kills)) + 16) * FontScale);
+        bonus_x   = int(kills_x   + ((bonus_len   = displayFont.StringWidth(text_bonus))   + 16) * FontScale);
+        secret_x  = int(bonus_x   + ((secret_len  = displayFont.StringWidth(text_secret))  + 16) * FontScale);
+        deaths_x  = int(secret_x  + ((deaths_len  = displayFont.StringWidth(text_deaths))  + 16) * FontScale);
+        ff_x      = int(deaths_x  + ((ff_len      = displayFont.StringWidth(text_ff))      + 16) * FontScale);
+        suicide_x = int(ff_x      + ((suicide_len = displayFont.StringWidth(text_suicide)) + 16) * FontScale);
+
+        x = (screen.GetWidth() - suicide_x) >> 1;
+        icon_x    += x;
+        name_x    += x;
+        kills_x   += x;
+        bonus_x   += x;
+        secret_x  += x;
+        deaths_x  += x;
+        ff_x      += x;
+        suicide_x += x;
+
+        // Header row
+        drawTextScaled(displayFont, name_x,                                                         y, Stringtable.Localize("$SCORE_NAME"), FontScale, textcolor);
+        drawTextScaled(displayFont, kills_x   - displayFont.StringWidth(text_kills)   * FontScale,  y, text_kills,   FontScale, textcolor);
+        drawTextScaled(displayFont, bonus_x   - bonus_len   * FontScale,                            y, text_bonus,   FontScale, textcolor);
+        drawTextScaled(displayFont, secret_x  - secret_len  * FontScale,                            y, text_secret,  FontScale, textcolor);
+        drawTextScaled(displayFont, deaths_x  - deaths_len  * FontScale,                            y, text_deaths,  FontScale, Font.CR_RED);
+        drawTextScaled(displayFont, ff_x      - ff_len      * FontScale,                            y, text_ff,      FontScale, Font.CR_ORANGE);
+        drawTextScaled(displayFont, suicide_x - suicide_len * FontScale,                            y, text_suicide, FontScale, Font.CR_YELLOW);
+        y += int(height + 6 * FontScale);
+
+        missed_kills   = wbs.maxkills;
+        missed_items   = wbs.maxitems;
+        missed_secrets = wbs.maxsecret;
+
+        // Player rows
+        for (i = 0; i < MAXPLAYERS; i++)
+        {
+            if (!playeringame[i]) continue;
+
+            PlayerInfo player;
+            player = players[i];
+
+            screen.Dim(player.GetDisplayColor(), 0.8f, x, y - ypadding,
+                (suicide_x - x) + (8 * CleanXfac), lineheight);
+
+            int thiscolor;
+            thiscolor = GetRowColor(player, i == consoleplayer);
+
+            if (player.mo.ScoreIcon.isValid())
+                screen.DrawTexture(player.mo.ScoreIcon, true, icon_x, y, DTA_CleanNoMove, true);
+
+            drawTextScaled(displayFont, name_x, y + ypadding, player.GetUserName(), FontScale, thiscolor);
+            drawPercentScaled(displayFont, kills_x, y + ypadding, cnt_kills[i], wbs.maxkills, FontScale, thiscolor);
+            missed_kills -= cnt_kills[i];
+
+            if (ng_state >= 4)
+            {
+                drawPercentScaled(displayFont, bonus_x, y + ypadding, cnt_items[i], wbs.maxitems, FontScale, thiscolor);
+                missed_items -= cnt_items[i];
+                if (ng_state >= 6)
+                {
+                    drawPercentScaled(displayFont, secret_x, y + ypadding, cnt_secret[i], wbs.maxsecret, FontScale, thiscolor);
+                    missed_secrets -= cnt_secret[i];
+                }
+            }
+
+            CVar pdcv;
+            CVar pffcv;
+            CVar pscv;
+            int d;
+            int f;
+            int s;
+            pdcv  = CVar.FindCVar("dc_p" .. i .. "_deaths");
+            pffcv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
+            pscv  = CVar.FindCVar("dc_p" .. i .. "_suicides");
+            d = 0;
+            f = 0;
+            s = 0;
+            if (pdcv)  d = pdcv.GetInt();
+            if (pffcv) f = pffcv.GetInt();
+            if (pscv)  s = pscv.GetInt();
+
+            drawNumScaled(displayFont, deaths_x,  y + ypadding, FontScale, d, 0, Font.CR_RED);
+            drawNumScaled(displayFont, ff_x,      y + ypadding, FontScale, f, 0, Font.CR_ORANGE);
+            drawNumScaled(displayFont, suicide_x, y + ypadding, FontScale, s, 0, Font.CR_YELLOW);
+
+            y += lineheight + CleanYfac;
+        }
+
+        // OTHER row
+        y += 3 * CleanYfac;
+        drawTextScaled(displayFont, name_x, y, Stringtable.Localize("$SCORE_OTHER"),  FontScale, Font.CR_DARKGRAY);
+        drawPercentScaled(displayFont, kills_x, y, cnt_otherkills, wbs.maxkills, FontScale, Font.CR_DARKGRAY);
+        missed_kills -= cnt_otherkills;
+
+        // MISSED row
+        y += height + 3 * CleanYfac;
+        drawTextScaled(displayFont, name_x, y, Stringtable.Localize("$SCORE_MISSED"), FontScale, Font.CR_DARKGRAY);
+        drawPercentScaled(displayFont, kills_x,  y, missed_kills,   wbs.maxkills,  FontScale, Font.CR_DARKGRAY);
+        drawPercentScaled(displayFont, bonus_x,  y, missed_items,   wbs.maxitems,  FontScale, Font.CR_DARKGRAY);
+        drawPercentScaled(displayFont, secret_x, y, missed_secrets, wbs.maxsecret, FontScale, Font.CR_DARKGRAY);
+
+        // TOTAL row
+        y += height + 3 * CleanYfac;
+        drawTextScaled(displayFont, name_x, y, Stringtable.Localize("$SCORE_TOTAL"),  FontScale, textcolor);
+        drawNumScaled(displayFont, kills_x,  y, FontScale, wbs.maxkills,  0, textcolor);
+        drawNumScaled(displayFont, bonus_x,  y, FontScale, wbs.maxitems,  0, textcolor);
+        drawNumScaled(displayFont, secret_x, y, FontScale, wbs.maxsecret, 0, textcolor);
+
+        // TIME row
+        y += height + 3 * CleanYfac;
+        drawTextScaled(displayFont, name_x, y, Stringtable.Localize("$TXT_IMTIME"), FontScale, textcolor);
+        if (ng_state >= 8)
+        {
+            drawTimeScaled(displayFont, kills_x,  y, cnt_time,       FontScale, textcolor);
+            drawTimeScaled(displayFont, secret_x, y, cnt_total_time, FontScale, textcolor);
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Status bar — automap HUD overlay + death scoreboard
+// ─────────────────────────────────────────────────────────────
+class DeathCountStatusBar : DoomStatusBar
+{
+    override void DrawAutomapHUD(double ticFrac)
+    {
+        Super.DrawAutomapHUD(ticFrac);
+
+        Font fnt;
+        fnt = generic_ui ? NewSmallFont : SmallFont;
+        int fh;
+        fh = fnt.GetHeight();
+
+        // Match the engine's virtual resolution so our text scales identically
+        // to the monster/secret/item counters drawn by DoDrawAutomapHUD.
+        Vector2 scalevec;
+        scalevec = GetHUDScale();
+        int vwidth;
+        int vheight;
+        vwidth  = int(Screen.GetWidth()  / scalevec.X);
+        vheight = int(Screen.GetHeight() / scalevec.Y);
+
+        int textdist;
+        textdist = 4;
+
+        // Start below however many engine stat lines are visible.
+        int lineCount;
+        lineCount = 0;
+        if (CVar.GetCVar('am_showmonsters', players[consoleplayer]).GetBool()) lineCount++;
+        if (CVar.GetCVar('am_showsecrets',  players[consoleplayer]).GetBool()) lineCount++;
+        if (CVar.GetCVar('am_showitems',    players[consoleplayer]).GetBool()) lineCount++;
+
+        int y;
+        y = lineCount * fh;
+
+        if (multiplayer)
+        {
+            for (int i = 0; i < MAXPLAYERS; i++)
+            {
+                if (!playeringame[i]) continue;
+                CVar cv;
+                int d;
+                int f;
+                int s;
+                d = 0; f = 0; s = 0;
+                cv = CVar.FindCVar("dc_p" .. i .. "_deaths");   if (cv) d = cv.GetInt();
+                cv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths"); if (cv) f = cv.GetInt();
+                cv = CVar.FindCVar("dc_p" .. i .. "_suicides"); if (cv) s = cv.GetInt();
+                String nm;
+                nm = players[i].GetUserName();
+                if (nm.Length() == 0) nm = String.Format("P%d", i);
+                screen.DrawText(fnt, Font.CR_GREY, textdist, y,
+                    String.Format("%s: %dd %dff %ds", nm, d, f, s),
+                    DTA_VirtualWidth, vwidth, DTA_VirtualHeight, vheight, DTA_KeepRatio, true);
+                y += fh;
+            }
+        }
+        else
+        {
+            CVar dcv;
+            CVar scv;
+            dcv = CVar.FindCVar("dc_p0_deaths");
+            scv = CVar.FindCVar("dc_p0_suicides");
+            int deaths;
+            int suicides;
+            deaths   = dcv ? dcv.GetInt() : 0;
+            suicides = scv ? scv.GetInt() : 0;
+            if (deaths > 0)
+            {
+                screen.DrawText(fnt, Font.CR_RED, textdist, y,
+                    String.Format("Deaths: %d", deaths),
+                    DTA_VirtualWidth, vwidth, DTA_VirtualHeight, vheight, DTA_KeepRatio, true);
+                y += fh;
+            }
+            if (suicides > 0)
+            {
+                screen.DrawText(fnt, Font.CR_YELLOW, textdist, y,
+                    String.Format("Suicides: %d", suicides),
+                    DTA_VirtualWidth, vwidth, DTA_VirtualHeight, vheight, DTA_KeepRatio, true);
+            }
+        }
+    }
+
+    override void Draw(int state, double TicFrac)
+    {
+        Super.Draw(state, TicFrac);
+
+        if (!multiplayer) return;
+        if (GameState != GS_LEVEL) return;
+        if (!CPlayer) return;
+        if (CPlayer.PlayerState != PST_DEAD) return;
+
+        DrawDeathScoreboard();
+    }
+
+    void DrawDeathScoreboard()
+    {
+        Font fnt;
+        fnt = generic_ui ? NewSmallFont : SmallFont;
+        int fh;
+        fh = fnt.GetHeight();
+
+        String text_name;
+        String text_kills;
+        String text_deaths;
+        String text_ff;
+        String text_suicide;
+        text_name    = "NAME";
+        text_kills   = "KILLS";
+        text_deaths  = "DEATHS";
+        text_ff      = "FF";
+        text_suicide = "SUICIDE";
+
+        int name_w;
+        int kills_w;
+        int deaths_w;
+        int ff_w;
+        int suicide_w;
+        name_w    = fnt.StringWidth(text_name);
+        kills_w   = fnt.StringWidth(text_kills);
+        deaths_w  = fnt.StringWidth(text_deaths);
+        ff_w      = fnt.StringWidth(text_ff);
+        suicide_w = fnt.StringWidth(text_suicide);
+
+        int maxNameW;
+        maxNameW = name_w;
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (!playeringame[i]) continue;
+            String nm;
+            nm = players[i].GetUserName();
+            if (nm.Length() == 0) nm = String.Format("P%d", i);
+            int nw;
+            nw = fnt.StringWidth(nm);
+            if (nw > maxNameW) maxNameW = nw;
+        }
+
+        int pad;
+        pad = 12 * CleanXfac;
+
+        int tableW;
+        tableW = (maxNameW + kills_w + deaths_w + ff_w + suicide_w) * CleanXfac + pad * 6;
+        int startX;
+        startX = (Screen.GetWidth() - tableW) / 2;
+
+        int col_name;
+        int col_kills;
+        int col_deaths;
+        int col_ff;
+        int col_suicide;
+        col_name    = startX;
+        col_kills   = col_name   + maxNameW  * CleanXfac + pad;
+        col_deaths  = col_kills  + kills_w   * CleanXfac + pad;
+        col_ff      = col_deaths + deaths_w  * CleanXfac + pad;
+        col_suicide = col_ff     + ff_w      * CleanXfac + pad;
+
+        int rowH;
+        rowH = fh * CleanYfac + 4 * CleanYfac;
+
+        int playerCount;
+        playerCount = 0;
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (playeringame[i]) playerCount++;
+        }
+
+        int murderExtra;
+        murderExtra = fh * CleanYfac + 2 * CleanYfac;
+
+        int headerY;
+        headerY = (Screen.GetHeight() - rowH * (playerCount + 2) - murderExtra) / 2;
+
+        int backdropW;
+        backdropW = tableW + pad * 2;
+        int backdropH;
+        backdropH = rowH * (playerCount + 2) + pad * 2 + murderExtra;
+        int backdropX;
+        backdropX = startX - pad;
+        int backdropY;
+        backdropY = headerY - pad;
+
+        // Full screen dim
+        Screen.Dim(0, 0.6, 0, 0, Screen.GetWidth(), Screen.GetHeight());
+        // Panel backdrop
+        Screen.Dim(0, 0.5, backdropX, backdropY, backdropW, backdropH);
+
+        // Header row
+        screen.DrawText(fnt, Font.CR_YELLOW, col_name,    headerY, text_name,    DTA_CleanNoMove, true);
+        screen.DrawText(fnt, Font.CR_YELLOW, col_kills,   headerY, text_kills,   DTA_CleanNoMove, true);
+        screen.DrawText(fnt, Font.CR_RED,    col_deaths,  headerY, text_deaths,  DTA_CleanNoMove, true);
+        screen.DrawText(fnt, Font.CR_ORANGE, col_ff,      headerY, text_ff,      DTA_CleanNoMove, true);
+        screen.DrawText(fnt, Font.CR_YELLOW, col_suicide, headerY, text_suicide, DTA_CleanNoMove, true);
+
+        // Divider
+        int divY;
+        divY = headerY + fh * CleanYfac + 2 * CleanYfac;
+        Screen.DrawLine(backdropX, divY, backdropX + backdropW, divY, Font.CR_WHITE);
+
+        int rowY;
+        rowY = divY + 2 * CleanYfac;
+
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (!playeringame[i]) continue;
+
+            PlayerInfo p;
+            p = players[i];
+
+            String nm;
+            nm = p.GetUserName();
+            if (nm.Length() == 0) nm = String.Format("P%d", i);
+
+            if (i == consoleplayer)
+                Screen.Dim(0x404040, 0.4, backdropX, rowY - 1 * CleanYfac, backdropW, rowH);
+
+            int nameColor;
+            nameColor = (i == consoleplayer) ? Font.CR_WHITE : Font.CR_GREY;
+
+            CVar pdcv;
+            CVar pffcv;
+            CVar pscv;
+            int d;
+            int f;
+            int s;
+            pdcv  = CVar.FindCVar("dc_p" .. i .. "_deaths");
+            pffcv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
+            pscv  = CVar.FindCVar("dc_p" .. i .. "_suicides");
+            d = 0;
+            f = 0;
+            s = 0;
+            if (pdcv)  d = pdcv.GetInt();
+            if (pffcv) f = pffcv.GetInt();
+            if (pscv)  s = pscv.GetInt();
+
+            screen.DrawText(fnt, nameColor,      col_name,    rowY, nm,                              DTA_CleanNoMove, true);
+            screen.DrawText(fnt, Font.CR_WHITE,  col_kills,   rowY, String.Format("%d", p.KillCount), DTA_CleanNoMove, true);
+            screen.DrawText(fnt, Font.CR_RED,    col_deaths,  rowY, String.Format("%d", d),           DTA_CleanNoMove, true);
+            screen.DrawText(fnt, Font.CR_ORANGE, col_ff,      rowY, String.Format("%d", f),           DTA_CleanNoMove, true);
+            screen.DrawText(fnt, Font.CR_YELLOW, col_suicide, rowY, String.Format("%d", s),           DTA_CleanNoMove, true);
+
+            rowY += rowH;
+        }
+
+        // Footer
+        int footerY;
+        footerY = rowY + 4 * CleanYfac;
+        screen.DrawText(fnt, Font.CR_DARKGRAY, col_name, footerY,
+            "Waiting to respawn...", DTA_CleanNoMove, true);
+
+        CVar lkCv;
+        lkCv = CVar.FindCVar("dc_p" .. consoleplayer .. "_last_killer");
+        int killerIdx;
+        killerIdx = lkCv ? lkCv.GetInt() : -1;
+        if (killerIdx == consoleplayer)
+        {
+            screen.DrawText(fnt, Font.CR_YELLOW,
+                col_name, footerY + fh * CleanYfac + 2 * CleanYfac,
+                "You killed yourself. Impressive.",
+                DTA_CleanNoMove, true);
+        }
+        else if (killerIdx >= 0 && killerIdx < MAXPLAYERS && playeringame[killerIdx])
+        {
+            String killerName;
+            killerName = players[killerIdx].GetUserName();
+            if (killerName.Length() == 0) killerName = String.Format("P%d", killerIdx);
+            screen.DrawText(fnt, Font.CR_RED,
+                col_name, footerY + fh * CleanYfac + 2 * CleanYfac,
+                String.Format("You were murdered by %s", killerName),
+                DTA_CleanNoMove, true);
+        }
+    }
+}

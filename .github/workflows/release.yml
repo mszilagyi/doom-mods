@@ -1,0 +1,52 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '*/v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse tag
+        id: parse
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          MOD=${TAG%/v*}
+          VERSION=${TAG#*/}
+          PK3NAME=$(cat "$MOD/PK3NAME")
+          echo "mod=$MOD" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "pk3name=$PK3NAME" >> $GITHUB_OUTPUT
+          echo "Building mod: $MOD version: $VERSION as $PK3NAME.pk3"
+
+      - name: Build pk3
+        run: |
+          mkdir -p build
+          cd ${{ steps.parse.outputs.mod }}
+          zip -j ../build/${{ steps.parse.outputs.pk3name }}.pk3 \
+            zscript.zsc CVARINFO MAPINFO
+          cd ..
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.parse.outputs.mod }} ${{ steps.parse.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          files: build/${{ steps.parse.outputs.pk3name }}.pk3
+          body: |
+            ## ${{ steps.parse.outputs.pk3name }}.pk3 ${{ steps.parse.outputs.version }}
+
+            Load alongside your WAD:
+            ```
+            uzdoom -iwad doom2.wad -file alienvendetta.wad ${{ steps.parse.outputs.pk3name }}.pk3
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
