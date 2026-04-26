@@ -7,6 +7,17 @@ class DeathCountHandler : StaticEventHandler
 {
     String lastMap;
 
+    int deaths[MAXPLAYERS];
+    int ffdeaths[MAXPLAYERS];
+    int suicides[MAXPLAYERS];
+    int last_killer[MAXPLAYERS];
+
+    override void OnRegister()
+    {
+        for (int i = 0; i < MAXPLAYERS; i++)
+            last_killer[i] = -1;
+    }
+
     int GetPlayerIndex(Actor mo)
     {
         if (mo == null || mo.player == null) return -1;
@@ -26,39 +37,27 @@ class DeathCountHandler : StaticEventHandler
         victim = GetPlayerIndex(e.thing);
         if (victim < 0) return;
 
-        CVar totalCv;
-        totalCv = CVar.FindCVar("dc_p" .. victim .. "_deaths");
-        if (totalCv)
-        {
-            totalCv.SetInt(totalCv.GetInt() + 1);
-            console.printf("%s died, death count now %d",
-                players[victim].GetUserName(), totalCv.GetInt());
-        }
+        deaths[victim]++;
+        console.printf("%s died, death count now %d",
+            players[victim].GetUserName(), deaths[victim]);
 
-        // Reset last_killer; will be set below only on FF kills.
-        CVar lkCv;
-        lkCv = CVar.FindCVar("dc_p" .. victim .. "_last_killer");
-        if (lkCv) lkCv.SetInt(-1);
+        last_killer[victim] = -1;
 
         int killerIdx;
         killerIdx = GetPlayerIndex(e.thing.target);
 
         if (killerIdx == victim)
         {
-            CVar suicideCv;
-            suicideCv = CVar.FindCVar("dc_p" .. victim .. "_suicides");
-            if (suicideCv) suicideCv.SetInt(suicideCv.GetInt() + 1);
-            if (lkCv) lkCv.SetInt(victim);
+            suicides[victim]++;
+            last_killer[victim] = victim;
             console.printf("%s suicided", players[victim].GetUserName());
             return;
         }
 
         if (killerIdx >= 0)
         {
-            CVar ffCv;
-            ffCv = CVar.FindCVar("dc_p" .. victim .. "_ffdeaths");
-            if (ffCv) ffCv.SetInt(ffCv.GetInt() + 1);
-            if (lkCv) lkCv.SetInt(killerIdx);
+            ffdeaths[victim]++;
+            last_killer[victim] = killerIdx;
             console.printf("%s killed by player %s - Friendly Fire!",
                 players[victim].GetUserName(), players[killerIdx].GetUserName());
         }
@@ -74,18 +73,10 @@ class DeathCountHandler : StaticEventHandler
             lastMap = currentMap;
             for (int i = 0; i < MAXPLAYERS; i++)
             {
-                CVar cv;
-                cv = CVar.FindCVar("dc_p" .. i .. "_deaths");
-                if (cv) cv.SetInt(0);
-                CVar ff;
-                ff = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
-                if (ff) ff.SetInt(0);
-                CVar su;
-                su = CVar.FindCVar("dc_p" .. i .. "_suicides");
-                if (su) su.SetInt(0);
-                CVar lk;
-                lk = CVar.FindCVar("dc_p" .. i .. "_last_killer");
-                if (lk) lk.SetInt(-1);
+                deaths[i]      = 0;
+                ffdeaths[i]    = 0;
+                suicides[i]    = 0;
+                last_killer[i] = -1;
             }
         }
     }
@@ -115,22 +106,19 @@ class DeathCountSPScreen : DoomStatusScreen
         textFont  = generic_ui ? NewSmallFont : content.mFont;
         printFont = useGfx ? IntermissionFont : (generic_ui ? IntermissionFont : content.mFont);
 
+        DeathCountHandler handler;
+        handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+        int deaths;
+        int suicides;
+        deaths   = handler ? handler.deaths[0]   : 0;
+        suicides = handler ? handler.suicides[0] : 0;
+
         // DEATHS row
         DrawText(textFont, Font.CR_RED, SP_STATSX, SP_STATSY + 3*lh, "DEATHS");
-        CVar dcv;
-        dcv = CVar.FindCVar("dc_p0_deaths");
-        int deaths;
-        deaths = 0;
-        if (dcv) deaths = dcv.GetInt();
         drawNum(printFont, 320 - SP_STATSX, SP_STATSY + 3*lh, deaths, -1, false, Font.CR_RED);
 
         // SUICIDES row
         DrawText(textFont, Font.CR_YELLOW, SP_STATSX, SP_STATSY + 4*lh, "SUICIDES");
-        CVar scv;
-        scv = CVar.FindCVar("dc_p0_suicides");
-        int suicides;
-        suicides = 0;
-        if (scv) suicides = scv.GetInt();
         drawNum(printFont, 320 - SP_STATSX, SP_STATSY + 4*lh, suicides, -1, false, Font.CR_ORANGE);
     }
 }
@@ -228,6 +216,9 @@ class DeathCountCoopScreen : CoopStatusScreen
         missed_items   = wbs.maxitems;
         missed_secrets = wbs.maxsecret;
 
+        DeathCountHandler handler;
+        handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+
         // Player rows
         for (i = 0; i < MAXPLAYERS; i++)
         {
@@ -260,21 +251,12 @@ class DeathCountCoopScreen : CoopStatusScreen
                 }
             }
 
-            CVar pdcv;
-            CVar pffcv;
-            CVar pscv;
             int d;
             int f;
             int s;
-            pdcv  = CVar.FindCVar("dc_p" .. i .. "_deaths");
-            pffcv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
-            pscv  = CVar.FindCVar("dc_p" .. i .. "_suicides");
-            d = 0;
-            f = 0;
-            s = 0;
-            if (pdcv)  d = pdcv.GetInt();
-            if (pffcv) f = pffcv.GetInt();
-            if (pscv)  s = pscv.GetInt();
+            d = handler ? handler.deaths[i]   : 0;
+            f = handler ? handler.ffdeaths[i] : 0;
+            s = handler ? handler.suicides[i] : 0;
 
             drawNumScaled(displayFont, deaths_x,  y + ypadding, FontScale, d, 0, Font.CR_RED);
             drawNumScaled(displayFont, ff_x,      y + ypadding, FontScale, f, 0, Font.CR_ORANGE);
@@ -350,19 +332,20 @@ class DeathCountStatusBar : DoomStatusBar
         int y;
         y = lineCount * fh;
 
+        DeathCountHandler handler;
+        handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+
         if (multiplayer)
         {
             for (int i = 0; i < MAXPLAYERS; i++)
             {
                 if (!playeringame[i]) continue;
-                CVar cv;
                 int d;
                 int f;
                 int s;
-                d = 0; f = 0; s = 0;
-                cv = CVar.FindCVar("dc_p" .. i .. "_deaths");   if (cv) d = cv.GetInt();
-                cv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths"); if (cv) f = cv.GetInt();
-                cv = CVar.FindCVar("dc_p" .. i .. "_suicides"); if (cv) s = cv.GetInt();
+                d = handler ? handler.deaths[i]   : 0;
+                f = handler ? handler.ffdeaths[i] : 0;
+                s = handler ? handler.suicides[i] : 0;
                 String nm;
                 nm = players[i].GetUserName();
                 if (nm.Length() == 0) nm = String.Format("P%d", i);
@@ -374,14 +357,10 @@ class DeathCountStatusBar : DoomStatusBar
         }
         else
         {
-            CVar dcv;
-            CVar scv;
-            dcv = CVar.FindCVar("dc_p0_deaths");
-            scv = CVar.FindCVar("dc_p0_suicides");
             int deaths;
             int suicides;
-            deaths   = dcv ? dcv.GetInt() : 0;
-            suicides = scv ? scv.GetInt() : 0;
+            deaths   = handler ? handler.deaths[0]   : 0;
+            suicides = handler ? handler.suicides[0] : 0;
             if (deaths > 0)
             {
                 screen.DrawText(fnt, Font.CR_RED, textdist, y,
@@ -516,6 +495,9 @@ class DeathCountStatusBar : DoomStatusBar
         int rowY;
         rowY = divY + 2 * CleanYfac;
 
+        DeathCountHandler handler;
+        handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+
         for (int i = 0; i < MAXPLAYERS; i++)
         {
             if (!playeringame[i]) continue;
@@ -533,21 +515,12 @@ class DeathCountStatusBar : DoomStatusBar
             int nameColor;
             nameColor = (i == consoleplayer) ? Font.CR_WHITE : Font.CR_GREY;
 
-            CVar pdcv;
-            CVar pffcv;
-            CVar pscv;
             int d;
             int f;
             int s;
-            pdcv  = CVar.FindCVar("dc_p" .. i .. "_deaths");
-            pffcv = CVar.FindCVar("dc_p" .. i .. "_ffdeaths");
-            pscv  = CVar.FindCVar("dc_p" .. i .. "_suicides");
-            d = 0;
-            f = 0;
-            s = 0;
-            if (pdcv)  d = pdcv.GetInt();
-            if (pffcv) f = pffcv.GetInt();
-            if (pscv)  s = pscv.GetInt();
+            d = handler ? handler.deaths[i]   : 0;
+            f = handler ? handler.ffdeaths[i] : 0;
+            s = handler ? handler.suicides[i] : 0;
 
             screen.DrawText(fnt, nameColor,      col_name,    rowY, nm,                              DTA_CleanNoMove, true);
             screen.DrawText(fnt, Font.CR_WHITE,  col_kills,   rowY, String.Format("%d", p.KillCount), DTA_CleanNoMove, true);
@@ -564,10 +537,8 @@ class DeathCountStatusBar : DoomStatusBar
         screen.DrawText(fnt, Font.CR_DARKGRAY, col_name, footerY,
             "Waiting to respawn...", DTA_CleanNoMove, true);
 
-        CVar lkCv;
-        lkCv = CVar.FindCVar("dc_p" .. consoleplayer .. "_last_killer");
         int killerIdx;
-        killerIdx = lkCv ? lkCv.GetInt() : -1;
+        killerIdx = handler ? handler.last_killer[consoleplayer] : -1;
         if (killerIdx == consoleplayer)
         {
             screen.DrawText(fnt, Font.CR_YELLOW,
