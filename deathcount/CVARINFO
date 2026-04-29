@@ -1,0 +1,1 @@
+user bool dc_show_hud_stats = true;

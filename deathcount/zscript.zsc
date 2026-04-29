@@ -11,6 +11,7 @@ class DeathCountHandler : StaticEventHandler
     int ffdeaths[MAXPLAYERS];
     int suicides[MAXPLAYERS];
     int last_killer[MAXPLAYERS];
+    int session_deaths[MAXPLAYERS];
 
     override void OnRegister()
     {
@@ -38,6 +39,7 @@ class DeathCountHandler : StaticEventHandler
         if (victim < 0) return;
 
         deaths[victim]++;
+        session_deaths[victim]++;
         console.printf("%s died, death count now %d",
             players[victim].GetUserName(), deaths[victim]);
 
@@ -153,11 +155,13 @@ class DeathCountCoopScreen : CoopStatusScreen
         int deaths_x;
         int ff_x;
         int suicide_x;
+        int session_x;
         int bonus_len;
         int secret_len;
         int deaths_len;
         int ff_len;
         int suicide_len;
+        int session_len;
         int missed_kills;
         int missed_items;
         int missed_secrets;
@@ -168,12 +172,14 @@ class DeathCountCoopScreen : CoopStatusScreen
         String text_deaths;
         String text_ff;
         String text_suicide;
+        String text_session;
         text_bonus   = Stringtable.Localize((gameinfo.gametype & GAME_Raven) ? "$SCORE_BONUS" : "$SCORE_ITEMS");
         text_secret  = Stringtable.Localize("$SCORE_SECRET");
         text_kills   = Stringtable.Localize("$SCORE_KILLS");
         text_deaths  = "DEATHS";
         text_ff      = "FF";
         text_suicide = "SUICIDE";
+        text_session = "SESSION";
 
         [maxnamewidth, maxscorewidth, maxiconheight] = GetPlayerWidths();
 
@@ -191,8 +197,9 @@ class DeathCountCoopScreen : CoopStatusScreen
         deaths_x  = int(secret_x  + ((deaths_len  = displayFont.StringWidth(text_deaths))  + 16) * FontScale);
         ff_x      = int(deaths_x  + ((ff_len      = displayFont.StringWidth(text_ff))      + 16) * FontScale);
         suicide_x = int(ff_x      + ((suicide_len = displayFont.StringWidth(text_suicide)) + 16) * FontScale);
+        session_x = int(suicide_x + ((session_len = displayFont.StringWidth(text_session)) + 16) * FontScale);
 
-        x = (screen.GetWidth() - suicide_x) >> 1;
+        x = (screen.GetWidth() - session_x) >> 1;
         icon_x    += x;
         name_x    += x;
         kills_x   += x;
@@ -201,6 +208,7 @@ class DeathCountCoopScreen : CoopStatusScreen
         deaths_x  += x;
         ff_x      += x;
         suicide_x += x;
+        session_x += x;
 
         // Header row
         drawTextScaled(displayFont, name_x,                                                         y, Stringtable.Localize("$SCORE_NAME"), FontScale, textcolor);
@@ -210,6 +218,7 @@ class DeathCountCoopScreen : CoopStatusScreen
         drawTextScaled(displayFont, deaths_x  - deaths_len  * FontScale,                            y, text_deaths,  FontScale, Font.CR_RED);
         drawTextScaled(displayFont, ff_x      - ff_len      * FontScale,                            y, text_ff,      FontScale, Font.CR_ORANGE);
         drawTextScaled(displayFont, suicide_x - suicide_len * FontScale,                            y, text_suicide, FontScale, Font.CR_YELLOW);
+        drawTextScaled(displayFont, session_x - session_len * FontScale,                            y, text_session, FontScale, Font.CR_GOLD);
         y += int(height + 6 * FontScale);
 
         missed_kills   = wbs.maxkills;
@@ -218,6 +227,13 @@ class DeathCountCoopScreen : CoopStatusScreen
 
         DeathCountHandler handler;
         handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+
+        int total_deaths;
+        int total_ffdeaths;
+        int total_suicides;
+        total_deaths   = 0;
+        total_ffdeaths = 0;
+        total_suicides = 0;
 
         // Player rows
         for (i = 0; i < MAXPLAYERS; i++)
@@ -228,7 +244,7 @@ class DeathCountCoopScreen : CoopStatusScreen
             player = players[i];
 
             screen.Dim(player.GetDisplayColor(), 0.8f, x, y - ypadding,
-                (suicide_x - x) + (8 * CleanXfac), lineheight);
+                (session_x - x) + (8 * CleanXfac), lineheight);
 
             int thiscolor;
             thiscolor = GetRowColor(player, i == consoleplayer);
@@ -254,13 +270,19 @@ class DeathCountCoopScreen : CoopStatusScreen
             int d;
             int f;
             int s;
-            d = handler ? handler.deaths[i]   : 0;
-            f = handler ? handler.ffdeaths[i] : 0;
-            s = handler ? handler.suicides[i] : 0;
+            int sd;
+            d  = handler ? handler.deaths[i]         : 0;
+            f  = handler ? handler.ffdeaths[i]        : 0;
+            s  = handler ? handler.suicides[i]        : 0;
+            sd = handler ? handler.session_deaths[i]  : 0;
+            total_deaths   += d;
+            total_ffdeaths += f;
+            total_suicides += s;
 
-            drawNumScaled(displayFont, deaths_x,  y + ypadding, FontScale, d, 0, Font.CR_RED);
-            drawNumScaled(displayFont, ff_x,      y + ypadding, FontScale, f, 0, Font.CR_ORANGE);
-            drawNumScaled(displayFont, suicide_x, y + ypadding, FontScale, s, 0, Font.CR_YELLOW);
+            drawNumScaled(displayFont, deaths_x,  y + ypadding, FontScale, d,  0, Font.CR_RED);
+            drawNumScaled(displayFont, ff_x,      y + ypadding, FontScale, f,  0, Font.CR_ORANGE);
+            drawNumScaled(displayFont, suicide_x, y + ypadding, FontScale, s,  0, Font.CR_YELLOW);
+            drawNumScaled(displayFont, session_x, y + ypadding, FontScale, sd, 0, Font.CR_GOLD);
 
             y += lineheight + CleanYfac;
         }
@@ -281,9 +303,20 @@ class DeathCountCoopScreen : CoopStatusScreen
         // TOTAL row
         y += height + 3 * CleanYfac;
         drawTextScaled(displayFont, name_x, y, Stringtable.Localize("$SCORE_TOTAL"),  FontScale, textcolor);
-        drawNumScaled(displayFont, kills_x,  y, FontScale, wbs.maxkills,  0, textcolor);
-        drawNumScaled(displayFont, bonus_x,  y, FontScale, wbs.maxitems,  0, textcolor);
-        drawNumScaled(displayFont, secret_x, y, FontScale, wbs.maxsecret, 0, textcolor);
+        drawNumScaled(displayFont, kills_x,  y, FontScale, wbs.maxkills,   0, textcolor);
+        drawNumScaled(displayFont, bonus_x,  y, FontScale, wbs.maxitems,   0, textcolor);
+        drawNumScaled(displayFont, secret_x, y, FontScale, wbs.maxsecret,  0, textcolor);
+        drawNumScaled(displayFont, deaths_x, y, FontScale, total_deaths,   0, Font.CR_RED);
+        drawNumScaled(displayFont, ff_x,     y, FontScale, total_ffdeaths, 0, Font.CR_ORANGE);
+        drawNumScaled(displayFont, suicide_x,y, FontScale, total_suicides, 0, Font.CR_YELLOW);
+
+        int sessionGrandTotal;
+        sessionGrandTotal = 0;
+        for (int j = 0; j < MAXPLAYERS; j++)
+        {
+            if (playeringame[j] && handler) sessionGrandTotal += handler.session_deaths[j];
+        }
+        drawNumScaled(displayFont, session_x, y, FontScale, sessionGrandTotal, 0, Font.CR_GOLD);
 
         // TIME row
         y += height + 3 * CleanYfac;
@@ -301,6 +334,16 @@ class DeathCountCoopScreen : CoopStatusScreen
 // ─────────────────────────────────────────────────────────────
 class DeathCountStatusBar : DoomStatusBar
 {
+    HUDFont mStatFont;
+    Font    mStatRaw;
+
+    override void Init()
+    {
+        Super.Init();
+        mStatRaw  = generic_ui ? NewSmallFont : SmallFont;
+        mStatFont = HUDFont.Create(mStatRaw);
+    }
+
     override void DrawAutomapHUD(double ticFrac)
     {
         Super.DrawAutomapHUD(ticFrac);
@@ -381,12 +424,52 @@ class DeathCountStatusBar : DoomStatusBar
     {
         Super.Draw(state, TicFrac);
 
-        if (!multiplayer) return;
-        if (GameState != GS_LEVEL) return;
-        if (!CPlayer) return;
-        if (CPlayer.PlayerState != PST_DEAD) return;
+        if (GameState != GS_LEVEL || !CPlayer) return;
 
-        DrawDeathScoreboard();
+        if (multiplayer && CPlayer.PlayerState == PST_DEAD)
+        {
+            DrawDeathScoreboard();
+            return;
+        }
+
+        if (state == HUD_StatusBar)
+        {
+            CVar cv = CVar.GetCVar('dc_show_hud_stats', players[consoleplayer]);
+            if (cv && cv.GetBool())
+            {
+                // Re-enter the status bar coordinate space (top-down 320x200).
+                // DrawMainBar already ran; we're adding on top of it.
+                BeginStatusBar();
+                DrawDeathHUDStats();
+            }
+        }
+    }
+
+    void DrawDeathHUDStats()
+    {
+        DeathCountHandler handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+        int ci = consoleplayer;
+        int d  = handler ? handler.deaths[ci]   : 0;
+        int f  = handler ? handler.ffdeaths[ci] : 0;
+        int s  = handler ? handler.suicides[ci] : 0;
+
+        // BeginStatusBar uses top-down 320x200 coordinates.
+        // The standard STBAR content begins at x=0; the widescreen stone extension
+        // is at x<0.  Right-justify the block against x=-4 (4px gap from AMMO box).
+        // Three rows of SmallFont (~8px each) fit inside the 32px bar.
+        //
+        //  [D:n] | x=0  AMMO box starts here
+        //  [FF:n]|
+        //  [S:n] |
+        int rx = -4;
+        int fh = mStatRaw.GetHeight();
+        int y1 = 170;
+        int y2 = y1 + fh + 1;
+        int y3 = y2 + fh + 1;
+
+        DrawString(mStatFont, String.Format("D:%d",  d), (rx, y1), DI_TEXT_ALIGN_RIGHT, Font.CR_RED);
+        DrawString(mStatFont, String.Format("FF:%d", f), (rx, y2), DI_TEXT_ALIGN_RIGHT, Font.CR_ORANGE);
+        DrawString(mStatFont, String.Format("S:%d",  s), (rx, y3), DI_TEXT_ALIGN_RIGHT, Font.CR_YELLOW);
     }
 
     void DrawDeathScoreboard()
