@@ -2,7 +2,7 @@
 
 A co-op death tracking mod for UZDoom 4.14.3.
 
-Tracks per-player deaths, friendly fire deaths, and suicides across a co-op Doom session and displays them across multiple screens.
+Tracks per-player deaths, friendly fire deaths, and suicides across a co-op Doom session and displays them on the status bar, intermission screens, and automap.
 
 ## Features
 
@@ -11,16 +11,42 @@ Tracks per-player deaths, friendly fire deaths, and suicides across a co-op Doom
 - **Friendly fire tracking** — tracks deaths caused by other players
 - **Murder callout** — when you die to friendly fire, the respawn scoreboard shows who killed you
 - **Counters reset on map change** — clean slate for each level
-- **Co-op intermission scoreboard** — adds DEATHS, FF, and SUICIDE columns to the end-of-level stats screen
+- **Persistent status bar overlay** — live D/FF/S counters always visible on the standard HUD (see below)
+- **Co-op intermission scoreboard** — adds DEATHS, FF, SUICIDE, and SESSION columns to the end-of-level stats screen
 - **SP intermission screen** — adds DEATHS and SUICIDES rows to the single-player stats screen
 - **Automap HUD overlay** — shows running totals while the automap is open, scaled to match the engine's own stat display
 - **Respawn scoreboard** — when a player dies in co-op, a full scoreboard overlay is displayed while waiting to respawn, showing NAME, KILLS, DEATHS, FF, and SUICIDE for all players
+
+## Status Bar Overlay
+
+When the standard status bar is visible (not the fullscreen/alternative HUD), death stats are drawn directly on the stone background panels on either side of the bar.
+
+**Left panel — your stats (always visible):**
+```
+D:n    ← total deaths (red)
+FF:n   ← friendly fire deaths (orange)
+S:n    ← suicides (yellow)
+```
+Right-justified against the left edge of the AMMO box.
+
+**Right panel — other players (multiplayer only):**
+
+One column per other player, starting just right of the ammo type counters. Each column shows:
+```
+Name   ← truncated player name (white, small)
+D:n    ← deaths (red)
+FF:n   ← friendly fire (orange)
+S:n    ← suicides (yellow)
+```
+On a 3440×1440 ultrawide display, approximately 3 other players are visible before the panels extend past the stone area. More panels become visible by reducing HUD scale.
+
+Both overlays are gated by the `dc_show_hud_stats` CVar and are hidden when the alternative/fullscreen HUD is active.
 
 ## Requirements
 
 - UZDoom 4.14.3 or later
 - Any Doom IWAD
-- Designed for co-op multiplayer, but SP death/suicide tracking works too
+- Designed for co-op multiplayer; SP death/suicide tracking works too
 
 ## Installation
 
@@ -35,37 +61,36 @@ Or add it via the UZDoom launcher.
 ```
 deathcount.pk3/
   zscript.zsc     — all scripting logic
-  CVARINFO        — server-replicated death counter CVars
+  CVARINFO        — display toggle CVar
   MAPINFO         — registers event handler, stat screens, and status bar
 ```
 
 ## CVars
 
-All CVars are `server int` and replicate to all players in a netgame. Stats are tracked for players 0–3.
+| CVar | Type | Default | Description |
+|---|---|---|---|
+| `dc_show_hud_stats` | `user bool` | `true` | Show/hide the persistent status bar overlay |
 
-| CVar | Description |
-|---|---|
-| `dc_p0_deaths` | Total deaths for player 0 (includes FF and suicide) |
-| `dc_p0_ffdeaths` | Friendly fire deaths for player 0 |
-| `dc_p0_suicides` | Suicides for player 0 |
-| `dc_p0_last_killer` | Player index of the last player to FF-kill player 0 (-1 if none) |
-| `dc_p1_*` | Same for player 1 |
-| `dc_p2_*` | Same for player 2 |
-| `dc_p3_*` | Same for player 3 |
+`user` CVars are local per-player settings and are not synced to the server. Toggle in-game:
+```
+dc_show_hud_stats false
+```
+
+Death counters are stored in memory by the `DeathCountHandler` event handler and are not exposed as CVars.
 
 ## Known Limitations
 
-### Player cap
-
-Stats are tracked for players 0–3 only. Players with index 4 or higher (5+ player sessions) will not have their deaths recorded. The mod fails silently for those players — no console spam, just no tracking.
-
 ### Respawn Scoreboard
 
-UZDoom 4.14.3's `DrawScoreboard` virtual function is version-gated to ZScript 4.15.1, which is not yet available in a released build. As a result the respawn scoreboard is implemented as a `Draw()` override rather than a proper `DrawScoreboard()` override. The practical difference for a 2–4 player co-op session is negligible.
+UZDoom 4.14.3's `DrawScoreboard` virtual function is version-gated to ZScript 4.15.1, which is not yet available in a released build. The respawn scoreboard is implemented as a `Draw()` override instead. The practical difference for a 2–4 player co-op session is negligible.
 
-When UZDoom ships a release with ZScript 4.15.1 support, the fix is:
+When UZDoom ships a release with ZScript 4.15.1 support:
 1. Change `version "4.14.3"` to `version "4.15.1"` in `zscript.zsc`
-2. Replace the `Draw()` override with the proper `DrawScoreboard()` override
+2. Replace the `Draw()` override with a proper `DrawScoreboard()` override
+
+### Status bar overlay on non-widescreen displays
+
+The left-panel stats render in the widescreen stone extension to the left of the AMMO box (at negative virtual x). On 4:3 displays with no widescreen extension this area is not visible and the overlay will not appear. The alternative/fullscreen HUD is unaffected.
 
 ## Tested With
 

@@ -441,6 +441,8 @@ class DeathCountStatusBar : DoomStatusBar
                 // DrawMainBar already ran; we're adding on top of it.
                 BeginStatusBar();
                 DrawDeathHUDStats();
+                if (multiplayer)
+                    DrawOtherPlayersStats();
             }
         }
     }
@@ -470,6 +472,53 @@ class DeathCountStatusBar : DoomStatusBar
         DrawString(mStatFont, String.Format("D:%d",  d), (rx, y1), DI_TEXT_ALIGN_RIGHT, Font.CR_RED);
         DrawString(mStatFont, String.Format("FF:%d", f), (rx, y2), DI_TEXT_ALIGN_RIGHT, Font.CR_ORANGE);
         DrawString(mStatFont, String.Format("S:%d",  s), (rx, y3), DI_TEXT_ALIGN_RIGHT, Font.CR_YELLOW);
+    }
+
+    void DrawOtherPlayersStats()
+    {
+        DeathCountHandler handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
+        if (!handler) return;
+
+        int fh = mStatRaw.GetHeight();  // SmallFont (~8px)
+
+        // Name is drawn at 75% scale to save vertical and horizontal space.
+        // Effective name height = fh * 0.75 ≈ 6px.
+        // Layout: name(6px) + 1px gap + D(8) + FF(8) + S(8) = 31px — fits in 32px bar.
+        double nameScale = 0.75;
+        int fhN = int(fh * nameScale);
+
+        int y0 = 169;           // name
+        int y1 = y0 + fhN + 1;  // D:n
+        int y2 = y1 + fh;       // FF:n
+        int y3 = y2 + fh;       // S:n
+
+        // Panel width driven by the widest stat row ("FF:99" in SmallFont).
+        // Name truncation uses scaled width so more characters fit.
+        int panelW   = mStatRaw.StringWidth("FF:99");
+        int panelGap = 6;
+
+        int x = 324;
+
+        for (int i = 0; i < MAXPLAYERS; i++)
+        {
+            if (!playeringame[i] || i == consoleplayer) continue;
+
+            String nm = players[i].GetUserName();
+            if (nm.Length() == 0) nm = String.Format("P%d", i);
+            while (nm.Length() > 1 && int(mStatRaw.StringWidth(nm) * nameScale) > panelW)
+                nm = nm.Left(nm.Length() - 1);
+
+            int d = handler.deaths[i];
+            int f = handler.ffdeaths[i];
+            int s = handler.suicides[i];
+
+            DrawString(mStatFont, nm,                        (x, y0), DI_TEXT_ALIGN_LEFT, Font.CR_WHITE,  1.0, -1, 4, (nameScale, nameScale));
+            DrawString(mStatFont, String.Format("D:%d",  d), (x, y1), DI_TEXT_ALIGN_LEFT, Font.CR_RED);
+            DrawString(mStatFont, String.Format("FF:%d", f), (x, y2), DI_TEXT_ALIGN_LEFT, Font.CR_ORANGE);
+            DrawString(mStatFont, String.Format("S:%d",  s), (x, y3), DI_TEXT_ALIGN_LEFT, Font.CR_YELLOW);
+
+            x += panelW + panelGap;
+        }
     }
 
     void DrawDeathScoreboard()
