@@ -16,7 +16,7 @@ To download a mod, go to the [Releases](../../releases) page and grab the `.pk3`
 
 ## Requirements
 
-- UZDoom 4.14.3 or later
+- UZDoom 5.0.0 or later
 - Any Doom IWAD
 
 ## Usage

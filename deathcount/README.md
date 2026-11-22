@@ -1,21 +1,21 @@
 # deathcount.pk3
 
-A co-op death tracking mod for UZDoom 4.14.3.
+A co-op death tracking mod for UZDoom 5.0+.
 
-Tracks per-player deaths, friendly fire deaths, and suicides across a co-op Doom session and displays them on the status bar, intermission screens, and automap.
+Tracks per-player deaths, friendly fire kills (teammates killed), and suicides across a co-op Doom session and displays them on the status bar, intermission screens, and automap.
 
 ## Features
 
-- **Death tracking** — counts every player death per map (deaths include FF and suicide)
+- **Death tracking** — counts every player death per map (deaths include suicides and deaths caused by teammates)
 - **Suicide detection** — separately tracks self-inflicted deaths
-- **Friendly fire tracking** — tracks deaths caused by other players
+- **Friendly fire tracking** — counts how many teammates each player has killed
 - **Murder callout** — when you die to friendly fire, the respawn scoreboard shows who killed you
 - **Counters reset on map change** — clean slate for each level
 - **Persistent status bar overlay** — live D/FF/S counters always visible on the standard HUD (see below)
-- **Co-op intermission scoreboard** — adds DEATHS, FF, SUICIDE, and SESSION columns to the end-of-level stats screen
+- **Co-op intermission scoreboard** — adds DEATHS, FF, SUICIDE, and SESSION columns to the end-of-level stats screen and the "Entering" screen that follows, with ready-up checkmarks for players who are ready to continue
 - **SP intermission screen** — adds DEATHS and SUICIDES rows to the single-player stats screen
 - **Automap HUD overlay** — shows running totals while the automap is open, scaled to match the engine's own stat display
-- **Respawn scoreboard** — when a player dies in co-op, a full scoreboard overlay is displayed while waiting to respawn, showing NAME, KILLS, DEATHS, FF, and SUICIDE for all players
+- **Co-op scoreboard** — replaces UZDoom's co-op scoreboard, both while you wait to respawn and while the scoreboard key (Tab by default) is held, showing NAME, KILLS, DEATHS, FF, SUICIDE, and PING for all players. Deathmatch keeps the engine's scoreboard
 
 ## Status Bar Overlay
 
@@ -24,7 +24,7 @@ When the standard status bar is visible (not the fullscreen/alternative HUD), de
 **Left panel — your stats (always visible):**
 ```
 D:n    ← total deaths (red)
-FF:n   ← friendly fire deaths (orange)
+FF:n   ← teammates you killed (orange)
 S:n    ← suicides (yellow)
 ```
 Right-justified against the left edge of the AMMO box.
@@ -35,7 +35,7 @@ One column per other player, starting just right of the ammo type counters. Each
 ```
 Name   ← truncated player name (white, small)
 D:n    ← deaths (red)
-FF:n   ← friendly fire (orange)
+FF:n   ← teammates they killed (orange)
 S:n    ← suicides (yellow)
 ```
 On a 3440×1440 ultrawide display, approximately 3 other players are visible before the panels extend past the stone area. More panels become visible by reducing HUD scale.
@@ -44,7 +44,7 @@ Both overlays are gated by the `dc_show_hud_stats` CVar and are hidden when the 
 
 ## Requirements
 
-- UZDoom 4.14.3 or later
+- UZDoom 5.0.0 or later (UZDoom 4.14.3 is no longer supported)
 - Any Doom IWAD
 - Designed for co-op multiplayer; SP death/suicide tracking works too
 
@@ -80,27 +80,19 @@ Death counters are stored in memory by the `DeathCountHandler` event handler and
 
 ## Known Limitations
 
-### Respawn Scoreboard
-
-UZDoom 4.14.3's `DrawScoreboard` virtual function is version-gated to ZScript 4.15.1, which is not yet available in a released build. The respawn scoreboard is implemented as a `Draw()` override instead. The practical difference for a 2–4 player co-op session is negligible.
-
-When UZDoom ships a release with ZScript 4.15.1 support:
-1. Change `version "4.14.3"` to `version "4.15.1"` in `zscript.zsc`
-2. Replace the `Draw()` override with a proper `DrawScoreboard()` override
-
 ### Status bar overlay on non-widescreen displays
 
 The left-panel stats render in the widescreen stone extension to the left of the AMMO box (at negative virtual x). On 4:3 displays with no widescreen extension this area is not visible and the overlay will not appear. The alternative/fullscreen HUD is unaffected.
 
 ## Tested With
 
-- UZDoom 4.14.3
+- UZDoom 5.0.3
 
 ## Notes
 
-- Deaths are a rollup — a suicide or FF kill increments both `deaths` and the specific sub-counter
+- Deaths are a rollup — a suicide increments both `deaths` and `suicides` for that player. A friendly fire kill increments the victim's `deaths` and the killer's `ffkills`, so FF is not part of a player's own deaths
 - Counters reset when a new map is loaded, not on player respawn
 - Suicide is detected when the killer and victim are the same actor
-- Friendly fire is detected when the killer is a different player
+- Friendly fire is detected when the killer is a different player, and is credited to the killer
 - The automap overlay shows per-player breakdown in multiplayer, and only shows deaths/suicides in SP when the count is greater than zero
 - The murder callout persists until the next death or map change

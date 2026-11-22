@@ -1,14 +1,15 @@
-version "4.14.3"
+version "5.0.0"
 
 // ─────────────────────────────────────────────────────────────
-//  EventHandler: tracks deaths, friendly fire deaths, suicides
+//  EventHandler: tracks deaths, friendly fire kills, suicides
 // ─────────────────────────────────────────────────────────────
 class DeathCountHandler : StaticEventHandler
 {
     String lastMap;
+    bool   resetPending;
 
     int deaths[MAXPLAYERS];
-    int ffdeaths[MAXPLAYERS];
+    int ffkills[MAXPLAYERS];    // teammates this player has killed
     int suicides[MAXPLAYERS];
     int last_killer[MAXPLAYERS];
     int session_deaths[MAXPLAYERS];
@@ -30,6 +31,25 @@ class DeathCountHandler : StaticEventHandler
         return -1;
     }
 
+    // 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 11 -> "11th", 22 -> "22nd", ...
+    static String Ordinal(int n)
+    {
+        String suffix;
+        suffix = "th";
+        int lastTwo;
+        lastTwo = n % 100;
+        if (lastTwo < 11 || lastTwo > 13)
+        {
+            switch (n % 10)
+            {
+                case 1: suffix = "st"; break;
+                case 2: suffix = "nd"; break;
+                case 3: suffix = "rd"; break;
+            }
+        }
+        return String.Format("%d%s", n, suffix);
+    }
+
     override void WorldThingDied(WorldEvent e)
     {
         if (e.thing == null) return;
@@ -40,8 +60,6 @@ class DeathCountHandler : StaticEventHandler
 
         deaths[victim]++;
         session_deaths[victim]++;
-        console.printf("%s died, death count now %d",
-            players[victim].GetUserName(), deaths[victim]);
 
         last_killer[victim] = -1;
 
@@ -52,35 +70,48 @@ class DeathCountHandler : StaticEventHandler
         {
             suicides[victim]++;
             last_killer[victim] = victim;
-            console.printf("%s suicided", players[victim].GetUserName());
+            // suicides[] resets each map, so 1 means this player's first this map.
+            if (suicides[victim] == 1)
+                console.printf("%s just committed suicide.", players[victim].GetUserName());
+            else
+                console.printf("%s has committed suicide (for the %s time). Perhaps they need a hug?",
+                    players[victim].GetUserName(), Ordinal(suicides[victim]));
             return;
         }
 
         if (killerIdx >= 0)
         {
-            ffdeaths[victim]++;
+            ffkills[killerIdx]++;    // FF is credited to the killer
             last_killer[victim] = killerIdx;
-            console.printf("%s killed by player %s - Friendly Fire!",
+            console.printf("%s killed by %s - Friendly Fire!",
                 players[victim].GetUserName(), players[killerIdx].GetUserName());
         }
     }
 
+    // Fires on level exit *before* the intermission, so only flag the reset
+    // here; resetting now would zero the stats screens. NextMap is empty
+    // when the level is restarted (e.g. SP death) or a save is loaded.
+    override void WorldUnloaded(WorldEvent e)
+    {
+        if (e.NextMap.Length() > 0)
+            resetPending = true;
+    }
+
+    // Fires when the next map starts, after the intermission.
     override void WorldLoaded(WorldEvent e)
     {
-        String currentMap;
-        currentMap = Level.MapName;
-
-        if (!e.IsSaveGame && currentMap != lastMap)
+        if (!e.IsSaveGame && (resetPending || Level.MapName != lastMap))
         {
-            lastMap = currentMap;
             for (int i = 0; i < MAXPLAYERS; i++)
             {
                 deaths[i]      = 0;
-                ffdeaths[i]    = 0;
+                ffkills[i]     = 0;
                 suicides[i]    = 0;
                 last_killer[i] = -1;
             }
         }
+        resetPending = false;
+        lastMap      = Level.MapName;
     }
 }
 
@@ -137,6 +168,54 @@ class DeathCountCoopScreen : CoopStatusScreen
         DrawDeathScoreboard(y);
     }
 
+    // UZDoom 5.0+ also draws the co-op scoreboard on the "Entering MAPxx"
+    // screen (and while waiting for players to ready up). Mirrors
+    // CoopStatusScreen.drawShowNextLoc() but draws our table instead.
+    override void drawShowNextLoc()
+    {
+        bg.drawBackground(CurState, true, snl_pointeron);
+
+        // Expanded from drawEL() because it doesn't return its y offset.
+        bool ispatch;
+        ispatch = TexMan.OkForLocalization(enteringPatch, "$WI_ENTERING");
+        int oldy;
+        oldy = TITLEY * scaleFactorY;
+
+        if (!ispatch)
+        {
+            int asc;
+            asc = entering.mFont.GetMaxAscender("$WI_ENTERING");
+            if (asc > TITLEY - 2)
+                oldy = (asc + 2) * scaleFactorY;
+        }
+
+        int y;
+        y = DrawPatchOrText(oldy, entering, enteringPatch, "$WI_ENTERING");
+
+        // Patch-based titles need extra offset so the map name doesn't overlap.
+        if (ispatch)
+        {
+            int h1;
+            int h2;
+            int disp;
+            Vector2 size;
+            size = TexMan.GetScaledSize(enteringPatch);
+            h1   = BigFont.GetHeight() - BigFont.GetDisplacement();
+            h2   = int(size.Y);
+            disp = min(h1, h2) / 4;
+            if (!wbs.LName1.isValid())
+                disp += mapname.mFont.GetMaxAscender(lnametexts[1]);
+            y += disp * scaleFactorY;
+        }
+
+        y = DrawName(y, wbs.LName1, lnametexts[1]);
+
+        if (wbs.LName1.isValid() && authortexts[1].length() > 0)
+            y += author.mFont.GetMaxAscender(authortexts[1]) * scaleFactorY;
+
+        DrawDeathScoreboard(DrawAuthor(y, authortexts[1]));
+    }
+
     protected void DrawDeathScoreboard(int y)
     {
         int i;
@@ -181,7 +260,17 @@ class DeathCountCoopScreen : CoopStatusScreen
         text_suicide = "SUICIDE";
         text_session = "SESSION";
 
+        TextureID readyico;
+        readyico = TexMan.CheckForTexture("READYICO", TexMan.Type_MiscPatch);
+
         [maxnamewidth, maxscorewidth, maxiconheight] = GetPlayerWidths();
+
+        // Use the ready icon's height if it's taller than the score icons (matches the engine).
+        Vector2 readysize;
+        Vector2 readyoffset;
+        readysize     = TexMan.GetScaledSize(readyico);
+        readyoffset   = TexMan.GetScaledOffset(readyico);
+        maxiconheight = MAX(int(readysize.Y - readyoffset.Y), maxiconheight);
 
         height     = int(displayFont.GetHeight() * FontScale);
         lineheight = MAX(height, maxiconheight * CleanYfac);
@@ -229,10 +318,10 @@ class DeathCountCoopScreen : CoopStatusScreen
         handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
 
         int total_deaths;
-        int total_ffdeaths;
+        int total_ffkills;
         int total_suicides;
         total_deaths   = 0;
-        total_ffdeaths = 0;
+        total_ffkills = 0;
         total_suicides = 0;
 
         // Player rows
@@ -245,6 +334,10 @@ class DeathCountCoopScreen : CoopStatusScreen
 
             screen.Dim(player.GetDisplayColor(), 0.8f, x, y - ypadding,
                 (session_x - x) + (8 * CleanXfac), lineheight);
+
+            // Ready-up checkmark (5.0+ ready system); bots are always ready.
+            if (ScreenJobRunner.IsPlayerReady(i))
+                screen.DrawTexture(readyico, true, x - (readysize.Y * CleanXfac), y, DTA_CleanNoMove, true);
 
             int thiscolor;
             thiscolor = GetRowColor(player, i == consoleplayer);
@@ -272,11 +365,11 @@ class DeathCountCoopScreen : CoopStatusScreen
             int s;
             int sd;
             d  = handler ? handler.deaths[i]         : 0;
-            f  = handler ? handler.ffdeaths[i]        : 0;
+            f  = handler ? handler.ffkills[i]         : 0;
             s  = handler ? handler.suicides[i]        : 0;
             sd = handler ? handler.session_deaths[i]  : 0;
             total_deaths   += d;
-            total_ffdeaths += f;
+            total_ffkills += f;
             total_suicides += s;
 
             drawNumScaled(displayFont, deaths_x,  y + ypadding, FontScale, d,  0, Font.CR_RED);
@@ -307,7 +400,7 @@ class DeathCountCoopScreen : CoopStatusScreen
         drawNumScaled(displayFont, bonus_x,  y, FontScale, wbs.maxitems,   0, textcolor);
         drawNumScaled(displayFont, secret_x, y, FontScale, wbs.maxsecret,  0, textcolor);
         drawNumScaled(displayFont, deaths_x, y, FontScale, total_deaths,   0, Font.CR_RED);
-        drawNumScaled(displayFont, ff_x,     y, FontScale, total_ffdeaths, 0, Font.CR_ORANGE);
+        drawNumScaled(displayFont, ff_x,     y, FontScale, total_ffkills, 0, Font.CR_ORANGE);
         drawNumScaled(displayFont, suicide_x,y, FontScale, total_suicides, 0, Font.CR_YELLOW);
 
         int sessionGrandTotal;
@@ -373,7 +466,7 @@ class DeathCountStatusBar : DoomStatusBar
         if (CVar.GetCVar('am_showitems',    players[consoleplayer]).GetBool()) lineCount++;
 
         int y;
-        y = lineCount * fh;
+        y = textdist + lineCount * fh;
 
         DeathCountHandler handler;
         handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
@@ -387,7 +480,7 @@ class DeathCountStatusBar : DoomStatusBar
                 int f;
                 int s;
                 d = handler ? handler.deaths[i]   : 0;
-                f = handler ? handler.ffdeaths[i] : 0;
+                f = handler ? handler.ffkills[i]  : 0;
                 s = handler ? handler.suicides[i] : 0;
                 String nm;
                 nm = players[i].GetUserName();
@@ -420,17 +513,28 @@ class DeathCountStatusBar : DoomStatusBar
         }
     }
 
+    // Replaces the engine's co-op scoreboard (shown while dead or while the
+    // scoreboard key is held) with the death-count table. Returning true
+    // tells the engine not to draw its own. Deathmatch keeps the engine's.
+    override bool DrawScoreboard(double ticFrac)
+    {
+        if (!multiplayer || deathmatch || GameState != GS_LEVEL || !CPlayer)
+            return Super.DrawScoreboard(ticFrac);
+
+        bool dead;
+        dead = CPlayer.PlayerState == PST_DEAD;
+        if (!dead && !IsScoreboardOpen())
+            return false;
+
+        DrawDeathScoreboard(dead);
+        return true;
+    }
+
     override void Draw(int state, double TicFrac)
     {
         Super.Draw(state, TicFrac);
 
         if (GameState != GS_LEVEL || !CPlayer) return;
-
-        if (multiplayer && CPlayer.PlayerState == PST_DEAD)
-        {
-            DrawDeathScoreboard();
-            return;
-        }
 
         if (state == HUD_StatusBar)
         {
@@ -452,7 +556,7 @@ class DeathCountStatusBar : DoomStatusBar
         DeathCountHandler handler = DeathCountHandler(StaticEventHandler.Find("DeathCountHandler"));
         int ci = consoleplayer;
         int d  = handler ? handler.deaths[ci]   : 0;
-        int f  = handler ? handler.ffdeaths[ci] : 0;
+        int f  = handler ? handler.ffkills[ci]  : 0;
         int s  = handler ? handler.suicides[ci] : 0;
 
         // BeginStatusBar uses top-down 320x200 coordinates.
@@ -494,7 +598,7 @@ class DeathCountStatusBar : DoomStatusBar
 
         // Panel width driven by the widest stat row ("FF:99" in SmallFont).
         // Name truncation uses scaled width so more characters fit.
-        int panelW   = mStatRaw.StringWidth("FF:99");
+        int panelW   = mStatRaw.StringWidth("FF:999");
         int panelGap = 6;
 
         int x = 324;
@@ -509,7 +613,7 @@ class DeathCountStatusBar : DoomStatusBar
                 nm = nm.Left(nm.Length() - 1);
 
             int d = handler.deaths[i];
-            int f = handler.ffdeaths[i];
+            int f = handler.ffkills[i];
             int s = handler.suicides[i];
 
             DrawString(mStatFont, nm,                        (x, y0), DI_TEXT_ALIGN_LEFT, Font.CR_WHITE,  1.0, -1, 4, (nameScale, nameScale));
@@ -521,7 +625,9 @@ class DeathCountStatusBar : DoomStatusBar
         }
     }
 
-    void DrawDeathScoreboard()
+    // dead: true while waiting to respawn (full-screen dim, respawn footer and
+    // murder callout); false when opened with the scoreboard key.
+    void DrawDeathScoreboard(bool dead)
     {
         Font fnt;
         fnt = generic_ui ? NewSmallFont : SmallFont;
@@ -533,22 +639,26 @@ class DeathCountStatusBar : DoomStatusBar
         String text_deaths;
         String text_ff;
         String text_suicide;
+        String text_ping;
         text_name    = "NAME";
         text_kills   = "KILLS";
         text_deaths  = "DEATHS";
         text_ff      = "FF";
         text_suicide = "SUICIDE";
+        text_ping    = "PING";
 
         int name_w;
         int kills_w;
         int deaths_w;
         int ff_w;
         int suicide_w;
+        int ping_w;
         name_w    = fnt.StringWidth(text_name);
         kills_w   = fnt.StringWidth(text_kills);
         deaths_w  = fnt.StringWidth(text_deaths);
         ff_w      = fnt.StringWidth(text_ff);
         suicide_w = fnt.StringWidth(text_suicide);
+        ping_w    = MAX(fnt.StringWidth(text_ping), fnt.StringWidth("999ms"));
 
         int maxNameW;
         maxNameW = name_w;
@@ -567,7 +677,7 @@ class DeathCountStatusBar : DoomStatusBar
         pad = 12 * CleanXfac;
 
         int tableW;
-        tableW = (maxNameW + kills_w + deaths_w + ff_w + suicide_w) * CleanXfac + pad * 6;
+        tableW = (maxNameW + kills_w + deaths_w + ff_w + suicide_w + ping_w) * CleanXfac + pad * 7;
         int startX;
         startX = (Screen.GetWidth() - tableW) / 2;
 
@@ -576,11 +686,13 @@ class DeathCountStatusBar : DoomStatusBar
         int col_deaths;
         int col_ff;
         int col_suicide;
+        int col_ping;
         col_name    = startX;
-        col_kills   = col_name   + maxNameW  * CleanXfac + pad;
-        col_deaths  = col_kills  + kills_w   * CleanXfac + pad;
-        col_ff      = col_deaths + deaths_w  * CleanXfac + pad;
-        col_suicide = col_ff     + ff_w      * CleanXfac + pad;
+        col_kills   = col_name    + maxNameW  * CleanXfac + pad;
+        col_deaths  = col_kills   + kills_w   * CleanXfac + pad;
+        col_ff      = col_deaths  + deaths_w  * CleanXfac + pad;
+        col_suicide = col_ff      + ff_w      * CleanXfac + pad;
+        col_ping    = col_suicide + suicide_w * CleanXfac + pad;
 
         int rowH;
         rowH = fh * CleanYfac + 4 * CleanYfac;
@@ -592,23 +704,29 @@ class DeathCountStatusBar : DoomStatusBar
             if (playeringame[i]) playerCount++;
         }
 
+        // While dead the table adds a "Waiting to respawn" footer row and a
+        // murder-callout line; the scoreboard-key view omits both.
+        int footerRows;
+        footerRows = dead ? 1 : 0;
         int murderExtra;
-        murderExtra = fh * CleanYfac + 2 * CleanYfac;
+        murderExtra = dead ? fh * CleanYfac + 2 * CleanYfac : 0;
 
         int headerY;
-        headerY = (Screen.GetHeight() - rowH * (playerCount + 2) - murderExtra) / 2;
+        headerY = (Screen.GetHeight() - rowH * (playerCount + 1 + footerRows) - murderExtra) / 2;
 
         int backdropW;
         backdropW = tableW + pad * 2;
         int backdropH;
-        backdropH = rowH * (playerCount + 2) + pad * 2 + murderExtra;
+        backdropH = rowH * (playerCount + 1 + footerRows) + pad * 2 + murderExtra;
         int backdropX;
         backdropX = startX - pad;
         int backdropY;
         backdropY = headerY - pad;
 
-        // Full screen dim
-        Screen.Dim(0, 0.6, 0, 0, Screen.GetWidth(), Screen.GetHeight());
+        // Full screen dim only on the death screen; keep gameplay visible
+        // when the scoreboard key is held.
+        if (dead)
+            Screen.Dim(0, 0.6, 0, 0, Screen.GetWidth(), Screen.GetHeight());
         // Panel backdrop
         Screen.Dim(0, 0.5, backdropX, backdropY, backdropW, backdropH);
 
@@ -618,11 +736,12 @@ class DeathCountStatusBar : DoomStatusBar
         screen.DrawText(fnt, Font.CR_RED,    col_deaths,  headerY, text_deaths,  DTA_CleanNoMove, true);
         screen.DrawText(fnt, Font.CR_ORANGE, col_ff,      headerY, text_ff,      DTA_CleanNoMove, true);
         screen.DrawText(fnt, Font.CR_YELLOW, col_suicide, headerY, text_suicide, DTA_CleanNoMove, true);
+        screen.DrawText(fnt, Font.CR_YELLOW, col_ping,    headerY, text_ping,    DTA_CleanNoMove, true);
 
         // Divider
         int divY;
         divY = headerY + fh * CleanYfac + 2 * CleanYfac;
-        Screen.DrawLine(backdropX, divY, backdropX + backdropW, divY, Font.CR_WHITE);
+        Screen.DrawLine(backdropX, divY, backdropX + backdropW, divY, Color(255, 255, 255));
 
         int rowY;
         rowY = divY + 2 * CleanYfac;
@@ -651,7 +770,7 @@ class DeathCountStatusBar : DoomStatusBar
             int f;
             int s;
             d = handler ? handler.deaths[i]   : 0;
-            f = handler ? handler.ffdeaths[i] : 0;
+            f = handler ? handler.ffkills[i]  : 0;
             s = handler ? handler.suicides[i] : 0;
 
             screen.DrawText(fnt, nameColor,      col_name,    rowY, nm,                              DTA_CleanNoMove, true);
@@ -659,9 +778,12 @@ class DeathCountStatusBar : DoomStatusBar
             screen.DrawText(fnt, Font.CR_RED,    col_deaths,  rowY, String.Format("%d", d),           DTA_CleanNoMove, true);
             screen.DrawText(fnt, Font.CR_ORANGE, col_ff,      rowY, String.Format("%d", f),           DTA_CleanNoMove, true);
             screen.DrawText(fnt, Font.CR_YELLOW, col_suicide, rowY, String.Format("%d", s),           DTA_CleanNoMove, true);
+            screen.DrawText(fnt, Font.CR_WHITE,  col_ping,    rowY, String.Format("%dms", p.GetAverageLatency()), DTA_CleanNoMove, true);
 
             rowY += rowH;
         }
+
+        if (!dead) return;
 
         // Footer
         int footerY;
